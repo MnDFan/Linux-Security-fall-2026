@@ -20,7 +20,7 @@ M. BOUSALEM BADRE
 - LANQUETIN Octave
 
 **Date**  
-October 03, 2026
+Month XX, 2026
 
 ---
 <div style="page-break-after: always;"></div>

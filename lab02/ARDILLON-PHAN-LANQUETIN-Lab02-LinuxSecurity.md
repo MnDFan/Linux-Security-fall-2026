@@ -826,9 +826,9 @@ The ban appeared on the third attempt, so no further diagnosis was needed. The f
 
 #### 8.1 Strategy
 
-*[Goal: allow the maintenance workstation (10.77.0.21 / fd42:77::21) temporarily, without a new account, key or ban, while keeping tpadmin, its key and the SSH controls unchanged]*
+The goal is to allow the maintenance workstation (10.77.0.21 / fd42:77::21) to reach SSH temporarily, without a new account, key or ban, while keeping tpadmin, its key and the SSH controls unchanged.
 
-*[Chosen solution and justification — e.g. dedicated rules vs. named set with timeout, how revocation is done, references used]*
+The chosen solution is two dedicated accept rules in the input chain of the tp2 table, one per IP family. Each one follows the pattern of the existing rules: internal interface enp0s8, one exact source address, TCP port 22. Both carry the comment tp2_maint, so they can be found with a single grep. They are inserted before the final counter drop, otherwise they would never be reached. Revocation is done by deleting each rule by its handle, which removes only these two rules and leaves the rest of the table untouched.
 
 <a id="sec8-2"></a>
 
@@ -836,8 +836,15 @@ The ban appeared on the third attempt, so no further diagnosis was needed. The f
 
 ```bash
 # Client — maintenance addresses
+sudo ip address add 10.77.0.21/24 dev enp0s8
+sudo ip -6 address add fd42:77::21/64 dev enp0s8
 
 # Server — added SSH permissions
+sudo nft insert rule inet tp2 input iifname "enp0s8" ip saddr 10.77.0.21 \
+  tcp dport 22 accept comment "tp2_maint"
+sudo nft insert rule inet tp2 input iifname "enp0s8" ip6 saddr fd42:77::21 \
+  tcp dport 22 counter accept comment "tp2_maint"
+sudo nft -a list chain inet tp2 input | grep tp2_maint
 
 ```
 
@@ -851,11 +858,15 @@ The ban appeared on the third attempt, so no further diagnosis was needed. The f
   <p><em>Figure 26: id over SSH from .21 and ::21 with the source explicitly bound</em></p>
 </div>
 
-*[Check that default filtering and ICMPv6 remain operational]*
+The two rules appear in the chain with the tag tp2_maint and the handles 54 (IPv4) and 55 (IPv6). From the client, SSH sessions bound to 10.77.0.21 and to fd42:77::21 both succeed: id runs on the server as tpadmin, with the same key as before. A ping -6 -I fd42:77::21 to the server also succeeds (2 packets, 0% loss), so ICMPv6 remains operational. The default filtering is unchanged for the other sources: .30 and ::30 are still refused (see 8.3).
 
 <a id="sec8-3"></a>
 
 #### 8.3 A2 — Validation matrix
+
+<div align="center"> 
+  <img src="images/s8-3-matrix.png" alt="" width="650"> <p><em>Figure 27 : Denied and permitted sources during the maintenance window</em></p>
+</div>
 
 | Criterion | Source | Command | Expected | Observed | Verified by |
 |---|---|---|---|---|---|
@@ -864,6 +875,8 @@ The ban appeared on the third attempt, so no further diagnosis was needed. The f
 | A2 | `10.77.0.30` | `nc -4 -vz -w 3 -s 10.77.0.30 ...` | Timeout | | |
 | A2 | `fd42:77::30` | `nc -6 -vz -w 3 -s fd42:77::30 ...` | Timeout | | |
 | A2 | `10.77.0.20` | `ssh -b 10.77.0.20 ... id` | Success | | |
+
+During the maintenance window, .21 and ::21 are accepted, .30 and ::30 are still silently dropped (timeout, no refusal), and .20 keeps its access. The temporary permission therefore does not widen access to any other source.
 
 <a id="sec8-4"></a>
 
@@ -876,8 +889,10 @@ The ban appeared on the third attempt, so no further diagnosis was needed. The f
 
 <div align="center">
   <img src="images/s8-4-revoked.png" alt="" width="650">
-  <p><em>Figure 27: After revocation — .21 and ::21 rejected, .20 still permitted</em></p>
+  <p><em>Figure 27: Revocation of the two maintenance rules by handle</em></p>
 </div>
+
+<div align="center"> <img src="images/s8-4-permission.png" alt="" width="650"> <p><em>Figure 28: After revocation — .21 and ::21 rejected, .20 still permitted</em></p> </div>
 
 | Source | Command (new connection) | Expected | Observed |
 |---|---|---|---|
@@ -885,40 +900,29 @@ The ban appeared on the third attempt, so no further diagnosis was needed. The f
 | `fd42:77::21` | `nc -6 -vz -w 3 -s fd42:77::21 ...` | Timeout | |
 | `10.77.0.20` | `ssh -b 10.77.0.20 ... id` | Success | |
 
-*[Role of connection states: why an already-open session from .21 may survive revocation (ct state established,related) and why only new connections prove the revocation]*
+After the two deletions, the grep tp2_maint returns nothing: no maintenance rule is left in the chain. New connections from .21 and ::21 time out, as for any unauthorised source, and .20 still works.
+
+Connection states matter here. The rule ct state established,related accept comes before the SSH rules, so an SSH session already opened from .21 before the revocation would not be cut by deleting the rule: its packets are matched as established. Only a new connection goes through the SSH rules again, which is why the revocation is proved with new connections, as done above. No session was left open during this test, so this behaviour was not observed directly.
 
 ---
 <div style="page-break-after: always;"></div>
 
 <a id="sec9"></a>
 
-### 9. Synthesis and environment restoration
+### 9. Conclusion
 
 <a id="sec9-1"></a>
 
-#### 9.1 Conclusion
-
-*[5 to 8 lines: trust in the server (host key), account authorisation (key + AllowGroups), static filtering (nftables), event-driven response (Fail2ban). One verified result, one limitation and a justified improvement. Mention any test not performed and why.]*
-
-<a id="sec9-2"></a>
-
-#### 9.2 Environment restoration
-
-```bash
-# Server
-sudo systemctl stop fail2ban
-sudo nft delete table inet tp2
-sudo diff -r /etc/ssh /root/ssh.tp2.before
-# Client
-ssh-agent -k
-```
-
-<div align="center">
-  <img src="images/s9-2-restore.png" alt="" width="500">
-  <p><em>Figure 28: Lab filter removed, SSH configuration compared with the backup, agent stopped</em></p>
-</div>
-
-*[Snapshots restored on both VMs — no private key included in this report]*
+This lab aimed to secure remote administration of a server over a dual-stack (IPv4/IPv6) network by
+combining several independent layers of control and checking each one with positive and negative
+tests. We first established trust in the server by comparing its host key fingerprint with the console
+value, then restricted access with an SSH policy based on keys and group membership. We then
+added static IPv4/IPv6 filtering with nftables, and finally an event-driven response with Fail2ban.
+Temporary maintenance access was added and revoked at the end. Each step was validated by new
+connections, logs and counters, which showed that every layer takes its own decision: server trust,
+account authorization, filtering by source address, and automated banning. One limitation remains: all
+these controls rely on the source address and on established sessions, so a compromised authorized
+source or an already open session is not stopped by them.
 
 <a id="ref"></a>
 

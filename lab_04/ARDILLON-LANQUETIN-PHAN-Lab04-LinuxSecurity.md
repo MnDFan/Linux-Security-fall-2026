@@ -29,11 +29,9 @@ October 24, 2026
 
 **Q1 A person can replace both resultat.txt and resultat.sha256. Which property is then missing from the check? Suggest an independent way to establish trust in the reference.**
 
-The check lacks authenticity (origin validation) and non-repudiation. While a cryptographic hash ensures integrity (it confirms that the document matches the computed digest), it does not authenticate the author or provenance of that digest. Consequently, an adversary capable of altering resultat.txt can simply recompute and overwrite resultat.sha256 with the new hash, bypassing detection completely.
+The check lacks authenticity and non-repudiation. While a cryptographic hash ensures integrity, as it confirms that the document matches the computed digest, it doesn't authenticate the author or provenance of that digest. This means that an adversary capable of altering resultat.txt can simply recompute and overwrite resultat.sha256 with the new hash, bypassing detection completely.
 
-To establish trust in the reference digest independently, you can:
-1. Use an independent out-of-band channel: Transmit or verify the hash value through a separate, trusted medium—such as verifying it verbally in person with the author, cross-referencing it via a secure secondary communication channel, or publishing it in a tamper-resistant location.
-2. Apply digital signatures: Cryptographically sign the digest (or document) using a private key belonging to a trusted identity, whose public key fingerprint is independently authenticated before verification
+To establish trust in the reference digest independently, we can use an independent out-of-band channel that would transmit or verify the hash value through a separate medium. We could also apply digital signatures to cryptographically sign the digest using a private key belonging to a trusted identity, whose public key fingerprint is independently authenticated before verification
 
 **P1 Evidence to retain Briefly identify the environment and retain the three verification results: original accepted, modification rejected, restored original accepted. Reuse these excerpts for Q1.**
 
@@ -46,7 +44,7 @@ To establish trust in the reference digest independently, you can:
 
 **Q2 Why is a valid signature made with an unknown public key insufficient to authenticate the Atlas laboratory?** 
 
-A mathematically valid signature only proves that the document was signed by the private key matching the supplied public key, and that the data has not been altered since signing. However, without an authenticated link between the public key and the identity of the Atlas laboratory (established through certificates or an out-of-band verified fingerprint), anyone can generate their own key pair, sign an arbitrary document, and claim to be Atlas. Authenticity relies entirely on trusting that the public key belongs to the legitimate entity.
+A valid signature only proves that the document was signed by the private key matching the supplied public key, and that the data has not been altered since signing. However, without an authenticated link between the public key and the identity of the Atlas laboratory, anyone can generate their own key pair, sign an arbitrary document, and claim to be Atlas. Authenticity relies entirely on trusting that the public key belongs to the legitimate entity.
 
 **What changes if the private key is compromised?**
 

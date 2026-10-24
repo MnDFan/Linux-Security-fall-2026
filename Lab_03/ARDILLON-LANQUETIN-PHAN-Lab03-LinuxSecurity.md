@@ -9,7 +9,7 @@
 *Linux Security*
 
 **Lab Report**  
-LAB 0 – Service confinement and mandatory access control
+LAB 03 – Service confinement and mandatory access control
 
 **Instructor**  
 M. BOUSALEM BADRE
@@ -25,7 +25,7 @@ October 03, 2026
 ---
 <div style="page-break-after: always;"></div>
 
-## Environments and diagnostic tools
+## 1/Environments and diagnostic tools
 
 **Q1 : Using the figure, distinguish the roles of systemd, AppArmor and SELinux.**
 
@@ -37,7 +37,7 @@ Finally the SELinux is a label/type-enforcement Mandatory Access Control (MAC) s
 
 In systemd, an active (running) state merely indicates that the process was launched successfully and is currently running without crashing. By default, a running daemon operates with full discretionary access control (DAC) permissions and default privileges. It is not confined unless explicit sandboxing directives, seccomp filters, or MAC profiles (AppArmor/SELinux) are specifically configured and actively enforced on it.
 
-## Baseline service on Ubuntu
+## 2/ Baseline service on Ubuntu
 
 **Q2 : Why can tp3svc run this service without a login shell?**
 
@@ -47,7 +47,7 @@ When systemd starts a service configured with User=tp3svc, it executes the targe
 
 For the value of establishing a baseline before hardening, a baseline validates that permissions (DAC), paths, ownership, and functional dependencies work properly in normal conditions prior to any security constraints. If a failure occurs later during sandboxing or Mandatory Access Control (MAC) enforcement, comparing behavior against the baseline isolates the exact security mechanism responsible rather than misattributing it to an underlying syntax or permission error.
 
-## Systemd confinement and privileges
+## 3/ Systemd confinement and privileges
 
 **Q3 : Explain these different results for the same UID.**
 
@@ -91,7 +91,7 @@ The value 2 merely indicates that a BPF system call filter is attached and enfor
   <p><em>Figure 5: Kernel Status and Privilege Inspection</em></p>
 </div>
 
-## AppArmor policy and access control 
+## 5/ AppArmor policy and access control 
 
 **Q4 : Does the profile protect these files against all programs?**
 
@@ -115,7 +115,7 @@ The explicit denial on /srv/tp3-aa/private/info.txt (audit deny ... r) would sti
   <p><em>Figure 7: Access Test Results and Unconfined Tool Comparison</em></p>
 </div>
 
-## SELinux denial on Rocky Linux 
+## 6/ SELinux denial on Rocky Linux 
 
 **Q5 In the AVC, identify scontext, tcontext, tclass and the denied permission.**
 
@@ -130,7 +130,7 @@ In Linux Discretionary Access Control (DAC), identity is bound strictly to the U
 
 In SELinux (MAC), process security domains are governed by execution transitions defined in the policy, not simply the POSIX user identity. An interactive command run via sudo -u apache cat ... executes within the administrator's shell domain (e.g., unconfined_t or sysadm_t), which possesses blanket permissions to read generic files (default_t). In contrast, the systemd unit starts Apache through binary execution policies that transition it specifically into the restricted and targeted httpd_t domain
 
-## Persistent SELinux contexts and DAC permissions
+## 7/ Persistent SELinux contexts and DAC permissions
 
 **P3 Evidence to retain Annotated initial AVC, server domain, types before and after the change, semanage mapping and HTTP response after correction. Explain the causal relationship.**
 
@@ -204,7 +204,105 @@ audit2allow is designed to generate custom policy modules allowing observed deni
   <p><em>Figure 16</em></p>
 </div>
 
-## Independent task 
+## 8/ Independent task 
+
+### 8.1 Access to one specific new file
+
+#### Modified AppArmor Profile
+
+The AppArmor profile `/etc/apparmor.d/usr.local.bin.tp3-reader` was modified to allow reading only the specific file `/srv/tp3-aa/valide/resultat.txt`. An exact pathname is used instead of a wildcard to adhere strictly to the principle of least privilege and satisfy criteria A1 and A2:
+
+```apparmor
+#include <tunables/global>
+profile tp3-reader /usr/local/bin/tp3-reader {
+  #include <abstractions/base>
+  /usr/local/bin/tp3-reader mr,
+  /srv/tp3-aa/public/** r,
+  /srv/tp3-aa/valide/resultat.txt r,
+  audit deny /srv/tp3-aa/private/** r,
+}
+```
+
+The profile was reloaded and placed into enforce mode:
+```bash
+sudo apparmor_parser -r /etc/apparmor.d/usr.local.bin.tp3-reader
+sudo aa-enforce /usr/local/bin/tp3-reader
+```
+
+<div align="center">
+  <img src="images\im17.png" alt="" width="500">
+  <p><em>Figure 17: Modified AppArmor Profile and Enforce Status</em></p>
+</div>
+
+---
+
+#### Acceptance Test Matrix (Criteria A1 and A2)
+
+All target files were configured with standard DAC read permissions (`0644`, owned by `root:root`). The test probe `/usr/local/bin/tp3-reader` was executed against all four paths:
+
+| Test Case | Target Path | DAC Mode | Expected Result | Observed Result | Exit Code | Enforcement Cause |
+|---|---|---|---|---|---|---|
+| **A1** | `/srv/tp3-aa/valide/resultat.txt` | `0644` | **Allowed** | File content printed | `0` | Explicit exact allow rule (`/srv/tp3-aa/valide/resultat.txt r`) |
+| **A1** | `/srv/tp3-aa/public/info.txt` | `0644` | **Allowed** | File content printed | `0` | Wildcard allow rule (`/srv/tp3-aa/public/** r`) |
+| **A2** | `/srv/tp3-aa/valide/autre.txt` | `0644` | **Denied** | `Permission denied` | `1` | Missing rule (Implicit default deny in enforce mode) |
+| **A2** | `/srv/tp3-aa/private/info.txt` | `0644` | **Denied** | `Permission denied` | `1` | Explicit audited deny rule (`audit deny ... r`) |
+
+<div align="center">
+  <img src="images\im18.png" alt="" width="500">
+  <p><em>Figure 18: Four Access Tests with Exit Codes</em></p>
+</div>
+
+---
+
+#### Denial Correlated Logs (Criterion A2)
+
+Audit logs were retrieved using `sudo journalctl -k --since '-5 min' --no-pager --grep='apparmor=.*tp3-reader'` (or `/var/log/audit/audit.log`):
+
+1. **Implicit denial on `/srv/tp3-aa/valide/autre.txt`:**
+```text
+type=AVC msg=audit(1728501420.104:142): apparmor="DENIED" operation="open" class="file" profile="tp3-reader" name="/srv/tp3-aa/valide/autre.txt" pid=2845 comm="tp3-reader" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+```
+*Analysis:* Because `/srv/tp3-aa/valide/autre.txt` is not matched by any allow rule, the access is rejected under AppArmor default-deny semantics in enforce mode.
+
+2. **Explicit audited denial on `/srv/tp3-aa/private/info.txt`:**
+```text
+type=AVC msg=audit(1728501422.312:143): apparmor="DENIED" operation="open" class="file" profile="tp3-reader" name="/srv/tp3-aa/private/info.txt" pid=2847 comm="tp3-reader" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+```
+*Analysis:* The access is blocked and audited due to the explicit `audit deny /srv/tp3-aa/private/** r,` directive.
+
+<div align="center">
+  <img src="images\im19.png" alt="" width="500">
+  <p><em>Figure 19: Correlated Kernel Denial Logs in journalctl / audit</em></p>
+</div>
+
+---
+
+#### Justifications and Cross-Check (Criterion A3)
+
+**Choice of Path Pattern:**
+- We explicitly chose the exact filename `/srv/tp3-aa/valide/resultat.txt r,` rather than a wildcard pattern such as `/srv/tp3-aa/valide/* r` or `/srv/tp3-aa/valide/** r`.
+- In AppArmor syntax, `*` matches any regular file within the directory, while `**` matches recursively. If a wildcard had been used, any additional file created in `/srv/tp3-aa/valide/` (such as `/srv/tp3-aa/valide/autre.txt`) would have been granted read access, violating criterion A2.
+- Using the exact file path strictly follows the **Principle of Least Privilege (PoLP)**: only the precise data asset required by the application is exposed, preventing accidental leakage of present or future sibling files in the same directory.
+
+**Limitation Revealed by Reading Directly with `cat`:**
+Running `cat /srv/tp3-aa/valide/autre.txt` and `cat /srv/tp3-aa/private/info.txt` succeeds and displays the contents without error:
+- **Root Cause:** AppArmor is a **path-based, binary-bound Mandatory Access Control** system. Its rules attach exclusively to the confined executable path (`/usr/local/bin/tp3-reader`).
+- **Limitation:** The files themselves do not possess intrinsic Mandatory Access Control labels. An unconfined utility such as `/bin/cat` operates outside the `tp3-reader` profile and is restricted solely by standard Discretionary Access Control (DAC) permissions. Because the files have DAC mode `0644`, any unconfined process or interactive user can freely read them. AppArmor cannot guarantee confidentiality if unconfined programs or shell environments have access to the underlying storage.
+
+<div align="center">
+  <img src="images\im20.png" alt="" width="500">
+  <p><em>Figure 20: Comparison with Unconfined Utility (cat)</em></p>
+</div>
+
+**Peer Verification and Cross-Check:**
+- **Positive case (`valide/resultat.txt`):** Independently verified by LANQUETIN Octave (read allowed, exit code 0).
+- **Negative case (`valide/autre.txt`):** Independently verified by ARDILLON Bastian (read denied, exit code 1, verified in audit log).
+- Confinement mode verified by PHAN Minh-Duc (profile active and enforced throughout all tests).
+
+## 9/ Conclusion 
+
+This lab illustrated the principles behind confinement as the result of several layers. We first established a baseline service, then restricted it with systemd, confined a dedicated binary with an AppArmor profile, and diagnosed an SELinux denial caused by an incorrect type.
+However, the main limitation is scope: an AppArmor profile only applies to the program it is attached to, so a direct  'cat '  still reads the same files. No single mechanism is sufficient, which is why protections must be combined and tested.
 
 ---
 
